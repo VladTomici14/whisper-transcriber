@@ -1,0 +1,4 @@
+openai-whisper
+torch>=1.13
+numpy
+tqdm
