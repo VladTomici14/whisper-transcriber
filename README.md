@@ -1,1 +1,1 @@
-# whisper-transcriber
+# Whisper Engine Transcriber
