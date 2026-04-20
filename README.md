@@ -43,6 +43,20 @@ python transcriber.py -i `lecture.mov`
 # then select a device by number when prompted
 ```
 
+## Burning the subtitles to the video 
+
+You have to install ffmpeg, with the `libass` installed on the machine. 
+
+You can install it using this command on MacOS:
+```
+brew install ffmpeg-full
+```
+
+And to write the subtitles to the video, you can run this:
+```
+ffmpeg -i input-video-path.mp4 -vf subtitles=input_subtitles.srt output-video-path.mp4
+```
+
 ## Notes & Troubleshooting
 - The script bypasses SSL verification internally to handle restrictive network environments.
 - If using CUDA, verify `torch.cuda.is_available()` and compatible drivers.
