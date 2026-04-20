@@ -65,7 +65,6 @@ print("Transcribing and translating...")
 result = model.transcribe(
     input_file_path,
     language="ro",
-    task="translate",
     verbose=True
 )
 
