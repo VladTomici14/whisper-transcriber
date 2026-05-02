@@ -3,8 +3,8 @@ name: Build
 on:
   push:
     tags:
-      - 'v*'          # triggers on git tag like v1.0.0
-  workflow_dispatch:  # allows manual trigger from GitHub UI
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,12 +14,12 @@ jobs:
           - os: macos-latest
             artifact: WhisperTranscriber-macOS
             ext: dmg
-          - os: windows-latest
-            artifact: WhisperTranscriber-Windows
-            ext: zip
-          - os: ubuntu-22.04
-            artifact: WhisperTranscriber-Linux
-            ext: tar.gz
+#          - os: windows-latest
+#            artifact: WhisperTranscriber-Windows
+#            ext: zip
+#          - os: ubuntu-22.04
+#            artifact: WhisperTranscriber-Linux
+#            ext: tar.gz
 
     runs-on: ${{ matrix.os }}
 
@@ -37,21 +37,21 @@ jobs:
         run: brew install mpv
 
       # ── Linux deps ────────────────────────────────────────────────
-      - name: Install mpv (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mpv libmpv-dev \
-            libgl1-mesa-dev libegl1-mesa-dev \
-            libxcb-xinerama0 libxcb-cursor0 \
-            libglib2.0-0
+#      - name: Install mpv (Linux)
+#        if: runner.os == 'Linux'
+#        run: |
+#          sudo apt-get update
+#          sudo apt-get install -y mpv libmpv-dev \
+#            libgl1-mesa-dev libegl1-mesa-dev \
+#            libxcb-xinerama0 libxcb-cursor0 \
+#            libglib2.0-0
 
       # ── Windows deps ──────────────────────────────────────────────
-      - name: Install mpv (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install mpv -y
-          echo "C:\ProgramData\chocolatey\lib\mpv\tools" >> $env:GITHUB_PATH
+#      - name: Install mpv (Windows)
+#        if: runner.os == 'Windows'
+#        run: |
+#          choco install mpv -y
+#          echo "C:\ProgramData\chocolatey\lib\mpv\tools" >> $env:GITHUB_PATH
 
       # ── Python deps (all platforms) ───────────────────────────────
       - name: Install Python dependencies
@@ -75,15 +75,15 @@ jobs:
             "dist/WhisperTranscriber.app"
 
       # ── Package: Windows → .zip ───────────────────────────────────
-      - name: Package Windows ZIP
-        if: runner.os == 'Windows'
-        run: Compress-Archive -Path dist/WhisperTranscriber -DestinationPath dist/WhisperTranscriber-Windows.zip
-        shell: pwsh
+#      - name: Package Windows ZIP
+#        if: runner.os == 'Windows'
+#        run: Compress-Archive -Path dist/WhisperTranscriber -DestinationPath dist/WhisperTranscriber-Windows.zip
+#        shell: pwsh
 
       # ── Package: Linux → .tar.gz ──────────────────────────────────
-      - name: Package Linux tarball
-        if: runner.os == 'Linux'
-        run: tar -czvf dist/WhisperTranscriber-Linux.tar.gz -C dist WhisperTranscriber
+#      - name: Package Linux tarball
+#        if: runner.os == 'Linux'
+#        run: tar -czvf dist/WhisperTranscriber-Linux.tar.gz -C dist WhisperTranscriber
 
       # ── Upload build artifact ─────────────────────────────────────
       - name: Upload artifact
