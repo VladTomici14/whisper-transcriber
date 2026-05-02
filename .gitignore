@@ -2,3 +2,4 @@
 examples/*
 junk/*
 .DS_Store
+__pycache__/
