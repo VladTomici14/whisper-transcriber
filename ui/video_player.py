@@ -1,23 +1,18 @@
 """
-VideoPlayer widget — wraps python-mpv for hardware-accelerated playback
-with live subtitle injection.
+VideoPlayer widget — uses mpv's OpenGL render API via MpvRenderContext.
+This approach works on all platforms including macOS Apple Silicon.
 
 Dependencies:
-    pip install python-mpv PyQt6
-
-mpv must also be installed on the system:
-    macOS:   brew install mpv
-    Ubuntu:  sudo apt install mpv libmpv-dev
-    Windows: download mpv and add to PATH
+    pip install python-mpv PyQt6 PyOpenGL
+    brew install mpv  (macOS)
 """
 
 from __future__ import annotations
 import ctypes
-import sys
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy
+from PyQt6.QtWidgets import QSizePolicy
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 
 try:
     import mpv
@@ -26,9 +21,9 @@ except ImportError:
     MPV_AVAILABLE = False
 
 
-class VideoPlayerWidget(QWidget):
+class VideoPlayerWidget(QOpenGLWidget):
     """
-    Embeds an mpv player into a Qt widget.
+    Renders mpv output via OpenGL — works on macOS Apple Silicon, Linux, Windows.
 
     Signals:
         position_changed(int)   – current position in milliseconds
@@ -39,44 +34,39 @@ class VideoPlayerWidget(QWidget):
     position_changed = pyqtSignal(int)
     duration_changed = pyqtSignal(int)
     playback_ended   = pyqtSignal()
+    _frame_ready     = pyqtSignal()   # internal: cross-thread repaint trigger
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)
-        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(640, 360)
-        self.setStyleSheet("background: #0a0a0a;")
 
         self._player: "mpv.MPV | None" = None
+        self._ctx:    "mpv.MpvRenderContext | None" = None
         self._current_subtitle_file: str | None = None
 
-        # Poll position every 250 ms
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(250)
         self._poll_timer.timeout.connect(self._poll_position)
 
-        if MPV_AVAILABLE:
-            self._init_mpv()
+        # _frame_ready is emitted from mpv's thread; Qt delivers it safely
+        # to the main thread via a queued connection before calling update()
+        self._frame_ready.connect(self.update, Qt.ConnectionType.QueuedConnection)
 
     # ------------------------------------------------------------------ #
-    # Initialisation                                                       #
+    # QOpenGLWidget lifecycle                                              #
     # ------------------------------------------------------------------ #
-    def _init_mpv(self) -> None:
-        wid = self.winId().__int__() if sys.platform != "darwin" else None
+    def initializeGL(self) -> None:
+        if not MPV_AVAILABLE:
+            return
 
-        kwargs = dict(
-            vo="gpu" if sys.platform != "darwin" else "libmpv",
-            hwdec="auto",
+        self._player = mpv.MPV(
+            vo="libmpv",          # render into our context, never open a window
+            hwdec="no",           # disable hwdec — causes issues with libmpv on macOS
             keep_open=True,
             hr_seek="yes",
         )
-        if wid:
-            kwargs["wid"] = wid
 
-        self._player = mpv.MPV(**kwargs)
-
-        # Observe duration when it becomes known
         @self._player.property_observer("duration")
         def _on_duration(name, value):
             if value is not None:
@@ -85,6 +75,50 @@ class VideoPlayerWidget(QWidget):
         @self._player.event_callback("end-file")
         def _on_end(event):
             self.playback_ended.emit()
+
+        from PyQt6.QtGui import QOpenGLContext
+
+        # mpv requires a true C function pointer, not a plain Python callable
+        GlProcAddressT = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)
+
+        def _get_proc_address_py(_, name: bytes) -> int:
+            ctx = QOpenGLContext.currentContext()
+            if ctx is None:
+                return 0
+            addr = ctx.getProcAddress(name)
+            # getProcAddress returns a sip.voidptr on PyQt6 — cast via int()
+            try:
+                return int(addr) or 0
+            except (TypeError, ValueError):
+                return 0
+
+        # Keep reference on self so the C callback isn't garbage-collected
+        self._get_proc_address_cb = GlProcAddressT(_get_proc_address_py)
+
+        self._ctx = mpv.MpvRenderContext(
+            self._player,
+            "opengl",
+            opengl_init_params={"get_proc_address": self._get_proc_address_cb},
+        )
+        # mpv calls this from its render thread — emit a signal so Qt
+        # marshals the repaint safely onto the main thread
+        self._ctx.update_cb = self._frame_ready.emit
+
+    def paintGL(self) -> None:
+        if self._ctx is None:
+            return
+        ratio = self.devicePixelRatio()
+        self._ctx.render(
+            flip_y=True,
+            opengl_fbo={
+                "w": int(self.width() * ratio),
+                "h": int(self.height() * ratio),
+                "fbo": self.defaultFramebufferObject(),
+            },
+        )
+
+    def resizeGL(self, w: int, h: int) -> None:
+        self.update()
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -97,11 +131,9 @@ class VideoPlayerWidget(QWidget):
         self._poll_timer.start()
 
     def load_subtitle(self, path: str) -> None:
-        """Load/reload an SRT file as the active subtitle track."""
         if not self._player:
             return
         self._current_subtitle_file = path
-        # Remove old external tracks, then add the new one
         try:
             self._player.command("sub-remove")
         except Exception:
@@ -109,7 +141,6 @@ class VideoPlayerWidget(QWidget):
         self._player.command("sub-add", path, "select", "Live Subtitles", "")
 
     def reload_subtitle(self) -> None:
-        """Re-read the current subtitle file (called after in-place edits)."""
         if self._current_subtitle_file:
             self.load_subtitle(self._current_subtitle_file)
 
@@ -147,22 +178,13 @@ class VideoPlayerWidget(QWidget):
             return int(dur * 1000) if dur is not None else 0
         return 0
 
-    # ------------------------------------------------------------------ #
-    # Internal                                                             #
-    # ------------------------------------------------------------------ #
     def _poll_position(self) -> None:
         self.position_changed.emit(self.position_ms)
 
-    def paintEvent(self, event):
-        if not MPV_AVAILABLE:
-            p = QPainter(self)
-            p.fillRect(self.rect(), QColor("#0a0a0a"))
-            p.setPen(QColor("#555"))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "python-mpv not installed.\nSee README for setup.")
-
-    def closeEvent(self, event):
+    def closeEvent(self, event) -> None:
         self._poll_timer.stop()
+        if self._ctx:
+            self._ctx.free()
         if self._player:
             self._player.terminate()
         super().closeEvent(event)

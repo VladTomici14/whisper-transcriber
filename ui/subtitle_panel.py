@@ -68,7 +68,7 @@ class SubtitlePanel(QWidget):
         self._table.setColumnWidth(0, 36)
         self._table.setColumnWidth(1, 100)
         self._table.setColumnWidth(2, 100)
-        self._table.currentRowChanged.connect(self._on_row_selected)
+        self._table.currentItemChanged.connect(lambda current, _: self._on_row_selected(self._table.row(current) if current else -1))
         splitter.addWidget(self._table)
 
         # ── Editor ────────────────────────────────────────────────────── #
