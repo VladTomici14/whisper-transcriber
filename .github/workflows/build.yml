@@ -1,0 +1,116 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on git tag like v1.0.0
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: WhisperTranscriber-macOS
+            ext: dmg
+          - os: windows-latest
+            artifact: WhisperTranscriber-Windows
+            ext: zip
+          - os: ubuntu-22.04
+            artifact: WhisperTranscriber-Linux
+            ext: tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── macOS deps ────────────────────────────────────────────────
+      - name: Install mpv (macOS)
+        if: runner.os == 'macOS'
+        run: brew install mpv
+
+      # ── Linux deps ────────────────────────────────────────────────
+      - name: Install mpv (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mpv libmpv-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libxcb-xinerama0 libxcb-cursor0 \
+            libglib2.0-0
+
+      # ── Windows deps ──────────────────────────────────────────────
+      - name: Install mpv (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install mpv -y
+          echo "C:\ProgramData\chocolatey\lib\mpv\tools" >> $env:GITHUB_PATH
+
+      # ── Python deps (all platforms) ───────────────────────────────
+      - name: Install Python dependencies
+        run: pip install PyQt6 python-mpv PyOpenGL pyinstaller
+
+      # ── Build ─────────────────────────────────────────────────────
+      - name: Build with PyInstaller
+        run: pyinstaller whisper-transcriber.spec --noconfirm
+
+      # ── Package: macOS → .dmg ─────────────────────────────────────
+      - name: Package macOS DMG
+        if: runner.os == 'macOS'
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "Whisper Transcriber" \
+            --window-size 600 400 \
+            --icon-size 128 \
+            --app-drop-link 450 185 \
+            "dist/WhisperTranscriber.dmg" \
+            "dist/WhisperTranscriber.app"
+
+      # ── Package: Windows → .zip ───────────────────────────────────
+      - name: Package Windows ZIP
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/WhisperTranscriber -DestinationPath dist/WhisperTranscriber-Windows.zip
+        shell: pwsh
+
+      # ── Package: Linux → .tar.gz ──────────────────────────────────
+      - name: Package Linux tarball
+        if: runner.os == 'Linux'
+        run: tar -czvf dist/WhisperTranscriber-Linux.tar.gz -C dist WhisperTranscriber
+
+      # ── Upload build artifact ─────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.tar.gz
+
+  # ── Create GitHub Release when a tag is pushed ───────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          generate_release_notes: true
