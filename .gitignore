@@ -4,3 +4,7 @@ junk/*
 .DS_Store
 __pycache__/
 *.pyc
+
+# Ignore build artifacts
+dist/
+build/
